@@ -1,6 +1,15 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
-import { AuthGuard } from '@nestjs/passport';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Post,
+  Query,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Request } from 'express';
 
 import { authRoute, CONFIRM_PASSWORD_NOT_MATCH } from 'src/helper/constants';
 import { LoginUserDto } from '../dto/loginUser.dto';
@@ -14,14 +23,14 @@ export class AuthController {
   @Post(authRoute.register)
   async register(@Body() registerUserDto: RegisterUserDto) {
     if (registerUserDto.confirmPassword !== registerUserDto.password) {
-      return CONFIRM_PASSWORD_NOT_MATCH;
+      throw new UnauthorizedException(CONFIRM_PASSWORD_NOT_MATCH);
     }
     const hasPassword = await bcrypt.hash(registerUserDto.password, 12);
     registerUserDto.password = hasPassword;
     return this.authService.register(registerUserDto);
   }
 
-  @UseGuards(AuthGuard('local'))
+  @HttpCode(200)
   @Post(authRoute.login)
   login(@Body() loginUserDto: LoginUserDto) {
     return this.authService.login(loginUserDto);
@@ -33,12 +42,27 @@ export class AuthController {
   }
 
   @Get(authRoute.verify)
-  verify(@Query('q') token: string) {
-    return this.authService.verify(token);
+  verifyAccount(@Query('q') token: string) {
+    return this.authService.verifyAccount(token);
+  }
+
+  @Post(authRoute.checkAuthentication)
+  checkAuthentication(@Req() request: Request) {
+    const { authorization, x_secret_key } = request.headers;
+    if (authorization && x_secret_key === process.env.X_SECRET_KEY) {
+      return this.authService.checkAuthentication(
+        this.#bearerToToken(authorization),
+      );
+    }
+    throw new UnauthorizedException();
   }
 
   @Post(authRoute.forgotPassword)
   forgotPassword() {
     return this.authService.forgotPassword();
+  }
+
+  #bearerToToken(token: string) {
+    return token.replace('Bearer ', '');
   }
 }

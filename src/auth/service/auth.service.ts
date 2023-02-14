@@ -1,8 +1,16 @@
-import { Injectable, Logger, NotAcceptableException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotAcceptableException,
+  UnauthorizedException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import * as CryptoJS from 'crypto-js';
 
 import { validationErrorMessage } from 'src/helper/errorConstants';
 import { LoginUserDto } from '../dto/loginUser.dto';
@@ -11,8 +19,10 @@ import { UserSchema } from '../schema/userSchema';
 import {
   ACCOUNT_VERIFY_SUCCESS,
   authRoute,
+  EMAIL_PASSWORD_INVALID,
   FROM_USER_EMAIL,
   JWT_TOKEN_EXPIRED,
+  JWT_TOKEN_NOTVALID,
   REGISTRATION_SUCCESS,
   SERVER_ERROR,
   SERVER_URL,
@@ -52,21 +62,42 @@ export class AuthService {
       return REGISTRATION_SUCCESS;
     } catch (error) {
       if (error.code === 11000) {
-        return validationErrorMessage.isAlreadyExists('Email or Mobile number');
+        throw new NotAcceptableException(
+          validationErrorMessage.isAlreadyExists('Email or Mobile number'),
+        );
       } else {
         Logger.error(error);
-        return SERVER_ERROR;
+        throw new InternalServerErrorException(SERVER_ERROR);
       }
     }
   }
 
-  login(loginUserDto: LoginUserDto) {
-    return loginUserDto;
+  async login(loginUserDto: LoginUserDto) {
+    const user: any = await this.validateUser(
+      loginUserDto.email,
+      loginUserDto.password,
+    );
+    delete user.password;
+    const token = this.#jwtCreateToken(
+      {
+        id: user.id,
+        name: user.firstName + ' ' + user.lastName,
+        role: user.role,
+        isBussinessAcount: user.isBussinessAcount,
+        mobile: user.mobile,
+        email: user.email,
+        isMobileVerified: user.isMobileVerified,
+        isEmailVerified: user.isEmailVerified,
+        isAccountActive: user.isAccountActive,
+      },
+      '1d',
+    );
+    return { token };
   }
 
   async validateUser(email: string, password: string): Promise<any> {
     const user: any = await this.userModel.findOne({ email: email }).exec();
-    if (!user) return null;
+    if (!user) throw new NotAcceptableException('could not find the user');
     const passwordValid = await bcrypt.compare(password, user.password);
     if (!user) {
       throw new NotAcceptableException('could not find the user');
@@ -74,16 +105,17 @@ export class AuthService {
     if (user && passwordValid) {
       return user;
     }
-    return null;
+    throw new UnauthorizedException(EMAIL_PASSWORD_INVALID);
   }
 
   logout() {
     return;
   }
 
-  async verify(token: string): Promise<string> {
+  async verifyAccount(token: string): Promise<string> {
     try {
-      const user: any = this.#jwtGetDetails(token);
+      const { key = '' } = this.#jwtGetDetails(token);
+      const user = this.#decryptKey(key);
       if (user && user.key && user.email && user.mobile) {
         await this.userModel
           .findOneAndUpdate(
@@ -93,26 +125,62 @@ export class AuthService {
           .exec();
         return ACCOUNT_VERIFY_SUCCESS;
       }
-      return JWT_TOKEN_EXPIRED;
+      throw new UnprocessableEntityException(JWT_TOKEN_EXPIRED);
     } catch (error) {
       Logger.error(error);
-      return JWT_TOKEN_EXPIRED;
+      if (error.status === 422) {
+        throw new UnprocessableEntityException(JWT_TOKEN_EXPIRED);
+      } else {
+        throw new NotAcceptableException(JWT_TOKEN_NOTVALID);
+      }
     }
+  }
+
+  checkAuthentication(token: string) {
+    const { key = '' } = this.#jwtGetDetails(token);
+    const user = this.#decryptKey(key);
+    return user;
   }
 
   forgotPassword() {
     return;
   }
 
-  #bearerToToken(token: string) {
-    return token.replace('Bearer ', '');
-  }
-
   #jwtGetDetails(token: string) {
-    return this.jwtService.verify(token);
+    try {
+      return this.jwtService.verify(token);
+    } catch (error) {
+      Logger.error(error);
+      throw new NotAcceptableException(JWT_TOKEN_NOTVALID);
+    }
   }
 
   #jwtCreateToken(data: any, expiresIn = '2h') {
-    return this.jwtService.sign(data, { expiresIn: expiresIn });
+    const key = this.#encryptKey(data);
+    try {
+      return this.jwtService.sign({ key }, { expiresIn: expiresIn });
+    } catch (error) {
+      Logger.error(error);
+    }
+  }
+
+  #encryptKey(data: any) {
+    return CryptoJS.AES.encrypt(
+      JSON.stringify(data),
+      process.env.CRYPTO_JS_KEY,
+    ).toString();
+  }
+
+  #decryptKey(encryptText: string) {
+    try {
+      const bytes = CryptoJS.AES.decrypt(
+        encryptText,
+        process.env.CRYPTO_JS_KEY,
+      );
+      const decryptedData = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
+      return decryptedData;
+    } catch (error) {
+      Logger.error(error);
+    }
   }
 }

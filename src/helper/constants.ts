@@ -4,6 +4,7 @@ export const authRoute = {
   verify: 'auth/v1/verify',
   logout: 'auth/v1/logout',
   forgotPassword: 'auth/v1/forgot-password',
+  checkAuthentication: 'auth/v1/check-authentication',
 };
 
 export const FROM_USER_EMAIL = 'sonali@ssovee.com';
@@ -27,3 +28,4 @@ export const SERVER_ERROR = 'Oops! something went wrong.';
 export const ACCOUNT_VERIFY_SUCCESS =
   'Congratulations, your account has been successfully verified.';
 export const JWT_TOKEN_EXPIRED = 'Oops! your token is expired.';
+export const JWT_TOKEN_NOTVALID = 'Oops! your token is not valid.';
